@@ -153,7 +153,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div className="header-icon">🥗</div>
-        <h1>Smart Pantry</h1>
+        <h1>Calorie Estimator</h1>
         <p className="subtitle">Upload a photo of your meal and get an instant calorie estimate powered by AI</p>
       </header>
 
