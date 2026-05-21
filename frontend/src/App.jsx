@@ -1,11 +1,19 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import heic2any from 'heic2any';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const COLD_START_HINT_MS = 5000;
+const REQUEST_TIMEOUT_MS = 60000;
 
 function isHeic(file) {
   const name = file.name.toLowerCase();
   return name.endsWith('.heic') || name.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${Math.round(bytes / 1024)}KB`;
 }
 
 export default function App() {
@@ -13,10 +21,16 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [coldStartHint, setColdStartHint] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef(null);
+  const coldStartTimerRef = useRef(null);
+
+  useEffect(() => () => {
+    if (coldStartTimerRef.current) clearTimeout(coldStartTimerRef.current);
+  }, []);
 
   const processFile = async (file) => {
     if (!file) return;
@@ -27,13 +41,26 @@ export default function App() {
       return;
     }
 
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`Image is too large (${formatBytes(file.size)}). Please upload an image under 5MB.`);
+      return;
+    }
+
     setResult(null);
     setError(null);
 
     if (isHeic(file)) {
       try {
         const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
-        const convertedFile = new File([blob], file.name.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg'), { type: 'image/jpeg' });
+        const convertedFile = new File(
+          [blob],
+          file.name.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg'),
+          { type: 'image/jpeg' },
+        );
+        if (convertedFile.size > MAX_FILE_SIZE) {
+          setError(`Converted image is too large (${formatBytes(convertedFile.size)}). Please try a smaller HEIC photo.`);
+          return;
+        }
         setSelectedFile(convertedFile);
         setImagePreview(URL.createObjectURL(blob));
       } catch {
@@ -74,6 +101,12 @@ export default function App() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setColdStartHint(false);
+
+    coldStartTimerRef.current = setTimeout(() => setColdStartHint(true), COLD_START_HINT_MS);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
       const formData = new FormData();
@@ -82,6 +115,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
 
       const data = await response.json();
@@ -90,14 +124,19 @@ export default function App() {
         throw new Error(data.error || 'Analysis failed. Please try again.');
       }
 
-      setResult(data.result);
+      setResult(data);
     } catch (err) {
-      if (err.name === 'TypeError' && err.message.includes('fetch')) {
+      if (err.name === 'AbortError') {
+        setError('The server took too long to respond. Free-tier hosting can be slow on first request — please try again.');
+      } else if (err.name === 'TypeError' && err.message.includes('fetch')) {
         setError('Cannot reach the server. Make sure the backend is running on port 5001.');
       } else {
         setError(err.message || 'Something went wrong. Please try again.');
       }
     } finally {
+      clearTimeout(timeoutId);
+      if (coldStartTimerRef.current) clearTimeout(coldStartTimerRef.current);
+      setColdStartHint(false);
       setLoading(false);
     }
   };
@@ -114,12 +153,11 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div className="header-icon">🥗</div>
-        <h1>Calorie Estimator</h1>
+        <h1>Smart Pantry</h1>
         <p className="subtitle">Upload a photo of your meal and get an instant calorie estimate powered by AI</p>
       </header>
 
       <main className="main">
-        {/* Upload Area */}
         <div
           className={`upload-area ${dragOver ? 'drag-over' : ''} ${imagePreview ? 'has-image' : ''}`}
           onDrop={handleDrop}
@@ -135,6 +173,7 @@ export default function App() {
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            capture="environment"
             onChange={handleFileChange}
             className="file-input"
             aria-hidden="true"
@@ -157,12 +196,11 @@ export default function App() {
               <div className="upload-icon">📷</div>
               <p className="upload-primary">Drag &amp; drop your food photo here</p>
               <p className="upload-secondary">or <span className="upload-link">click to browse</span></p>
-              <p className="upload-hint">Supports JPG, PNG, WEBP, GIF, HEIC</p>
+              <p className="upload-hint">JPG, PNG, WEBP, GIF, HEIC · max 5MB</p>
             </div>
           )}
         </div>
 
-        {/* File name display */}
         {selectedFile && (
           <div className="file-info">
             <span className="file-name">📎 {selectedFile.name}</span>
@@ -170,7 +208,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Analyze Button */}
         <button
           className="analyze-btn"
           onClick={handleAnalyze}
@@ -190,7 +227,13 @@ export default function App() {
           )}
         </button>
 
-        {/* Error Display */}
+        {coldStartHint && loading && (
+          <div className="hint-card" role="status">
+            <span className="hint-icon">⏳</span>
+            <p>The server is warming up — this can take ~30 seconds on free hosting. Hang tight.</p>
+          </div>
+        )}
+
         {error && (
           <div className="error-card" role="alert">
             <span className="error-icon">⚠️</span>
@@ -201,15 +244,42 @@ export default function App() {
           </div>
         )}
 
-        {/* Result Display */}
-        {result && (
+        {result && result.isFood === false && (
+          <div className="error-card" role="alert">
+            <span className="error-icon">🤔</span>
+            <div>
+              <strong>That doesn't look like food</strong>
+              <p>{result.notes || 'Please upload a photo of a meal to get calorie estimates.'}</p>
+            </div>
+          </div>
+        )}
+
+        {result && result.isFood !== false && (
           <div className="result-card" role="region" aria-label="Calorie analysis results">
             <div className="result-header">
               <span className="result-icon">✅</span>
               <h2>Calorie Analysis</h2>
             </div>
             <div className="result-body">
-              <pre className="result-text">{result}</pre>
+              <div className="total-calories">
+                <span className="total-label">Total estimated</span>
+                <span className="total-value">~{Math.round(result.totalCalories || 0)} cal</span>
+              </div>
+
+              {Array.isArray(result.items) && result.items.length > 0 && (
+                <ul className="items-list">
+                  {result.items.map((item, idx) => (
+                    <li key={idx} className="item-row">
+                      <span className="item-name">{item.name}</span>
+                      <span className="item-cal">~{Math.round(item.calories || 0)} cal</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {result.notes && (
+                <p className="result-notes">{result.notes}</p>
+              )}
             </div>
             <button className="analyze-again-btn" onClick={handleReset}>
               Analyze Another Meal

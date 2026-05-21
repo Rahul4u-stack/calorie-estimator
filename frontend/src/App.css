@@ -358,6 +358,92 @@ body {
   word-break: break-word;
 }
 
+/* ===== Structured Result ===== */
+.total-calories {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px dashed #d1fae5;
+}
+
+.total-label {
+  font-size: 0.85rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.total-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #15803d;
+  letter-spacing: -0.5px;
+}
+
+.items-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.75rem;
+  background: #f9fafb;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.item-name {
+  color: #374151;
+  font-weight: 500;
+}
+
+.item-cal {
+  color: #16a34a;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-notes {
+  font-size: 0.85rem;
+  color: #6b7280;
+  line-height: 1.5;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e5e7eb;
+  font-style: italic;
+}
+
+/* ===== Cold-start Hint ===== */
+.hint-card {
+  background: #fffbeb;
+  border: 1.5px solid #fcd34d;
+  border-radius: 12px;
+  padding: 0.85rem 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  animation: fadeSlideIn 0.25s ease;
+}
+
+.hint-icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+
+.hint-card p {
+  color: #92400e;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
 .analyze-again-btn {
   display: block;
   width: calc(100% - 3rem);

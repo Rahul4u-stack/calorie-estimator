@@ -1,11 +1,20 @@
 import os
 import base64
+import json
+import logging
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000", "http://localhost:5173", os.getenv("FRONTEND_URL", "*")])
@@ -50,7 +59,33 @@ def analyze_image():
     image_b64 = base64.standard_b64encode(image_data).decode('utf-8')
 
     if TEST_MODE:
-        return jsonify({'result': 'Food items identified:\n• Sample Food Item: ~350 calories\n• Side Dish: ~150 calories\n\nTotal estimated calories: ~500 calories\n\nNote: This is TEST MODE. Set TEST_MODE=false in .env and add Anthropic API credits to get real analysis.'})
+        return jsonify({
+            'isFood': True,
+            'items': [
+                {'name': 'Sample Food Item', 'calories': 350},
+                {'name': 'Side Dish', 'calories': 150},
+            ],
+            'totalCalories': 500,
+            'notes': 'TEST MODE. Set TEST_MODE=false in .env and add Anthropic API credits for real analysis.',
+        })
+
+    prompt_text = """Analyze this food image and return calorie estimates as JSON.
+
+Return ONLY a valid JSON object, no surrounding text or markdown fences. Use this schema:
+
+{
+  "isFood": boolean,
+  "items": [{"name": string, "calories": number}],
+  "totalCalories": number,
+  "notes": string
+}
+
+Rules:
+- If the image is not food, set "isFood": false, leave "items" as [], "totalCalories" as 0, and put a short message in "notes".
+- Otherwise list each distinct food item you can see with its estimated calories.
+- "totalCalories" must equal the sum of items[].calories.
+- Use "notes" for portion size assumptions or confidence caveats.
+"""
 
     try:
         response = client.messages.create(
@@ -68,32 +103,37 @@ def analyze_image():
                                 "data": image_b64,
                             },
                         },
-                        {
-                            "type": "text",
-                            "text": """Analyze this food image and provide calorie estimates.
-
-Please respond in this exact format:
-Food items identified:
-• [Food item 1]: ~[calories] calories
-• [Food item 2]: ~[calories] calories
-(list each distinct food item you can see)
-
-Total estimated calories: ~[total] calories
-
-Note: [Any relevant notes about portion sizes, confidence level, or if this isn't a food image]
-
-If this is not a food image, respond with: "This doesn't appear to be a food image. Please upload a photo of food to get calorie estimates."
-"""
-                        }
+                        {"type": "text", "text": prompt_text},
                     ],
                 }
             ],
         )
-        result = response.content[0].text
-        return jsonify({'result': result})
+        if not response.content or not response.content[0].text:
+            logger.error("Empty response from Claude API")
+            return jsonify({'error': 'Empty response from AI. Please try again.'}), 502
+
+        raw = response.content[0].text.strip()
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not match:
+            logger.error("Claude response did not contain JSON: %s", raw[:300])
+            return jsonify({'error': 'AI returned an unexpected response. Please try again.'}), 502
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError as e:
+            logger.error("JSON parse failed: %s | raw=%s", e, raw[:300])
+            return jsonify({'error': 'AI returned malformed data. Please try again.'}), 502
+
+        return jsonify({
+            'isFood': bool(parsed.get('isFood', True)),
+            'items': parsed.get('items', []),
+            'totalCalories': parsed.get('totalCalories', 0),
+            'notes': parsed.get('notes', ''),
+        })
     except anthropic.AuthenticationError:
+        logger.error("Anthropic AuthenticationError")
         return jsonify({'error': 'Invalid API key. Check your ANTHROPIC_API_KEY in the .env file.'}), 500
     except anthropic.BadRequestError as e:
+        logger.error("Anthropic BadRequestError: %s", e)
         err_msg = str(e).lower()
         if 'credit balance' in err_msg:
             return jsonify({'error': 'Anthropic API credits exhausted. Please add credits at console.anthropic.com/settings/billing'}), 402
@@ -101,12 +141,16 @@ If this is not a food image, respond with: "This doesn't appear to be a food ima
             return jsonify({'error': 'Could not process this image. Try a smaller JPG or PNG photo (under 5MB).'}), 400
         return jsonify({'error': f'API request error: {str(e)}'}), 400
     except anthropic.APIError as e:
+        logger.error("Anthropic APIError: %s", e)
         return jsonify({'error': f'AI service error: {str(e)}'}), 500
+    except Exception as e:
+        logger.exception("Unexpected error in /api/analyze")
+        return jsonify({'error': 'Unexpected server error. Please try again.'}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy'})
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
+    port = int(os.getenv('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_ENV') == 'development')
