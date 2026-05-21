@@ -1,12 +1,9 @@
 import os
-import io
 import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import anthropic
 from dotenv import load_dotenv
-from PIL import Image
-import pillow_heif
 
 load_dotenv()
 
@@ -16,8 +13,7 @@ CORS(app, origins=["http://localhost:3000", "http://localhost:5173", os.getenv("
 TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-pillow_heif.register_heif_opener()
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -33,7 +29,7 @@ def analyze_image():
         return jsonify({'error': 'No file selected'}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({'error': 'File type not supported. Please upload PNG, JPG, JPEG, GIF, WEBP, or HEIC'}), 400
+        return jsonify({'error': 'File type not supported. Please upload PNG, JPG, JPEG, GIF or WEBP'}), 400
 
     image_data = file.read()
 
@@ -42,22 +38,14 @@ def analyze_image():
         return jsonify({'error': f'Image too large ({len(image_data) // (1024*1024)}MB). Please upload an image under 5MB.'}), 400
 
     ext = file.filename.rsplit('.', 1)[1].lower()
-
-    if ext in ('heic', 'heif'):
-        img = Image.open(io.BytesIO(image_data))
-        buf = io.BytesIO()
-        img.convert('RGB').save(buf, format='JPEG', quality=85)
-        image_data = buf.getvalue()
-        media_type = 'image/jpeg'
-    else:
-        media_type_map = {
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'png': 'image/png',
-            'gif': 'image/gif',
-            'webp': 'image/webp'
-        }
-        media_type = media_type_map.get(ext, 'image/jpeg')
+    media_type_map = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp'
+    }
+    media_type = media_type_map.get(ext, 'image/jpeg')
 
     image_b64 = base64.standard_b64encode(image_data).decode('utf-8')
 
